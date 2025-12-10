@@ -1,13 +1,17 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import axios from "axios";
 import { useRouter } from "next/router";
+import useSWR from "swr";
 import Logo from "../components/Logo";
 
-export default function Login() {
+const fetcher = (url) => axios.get(url).then((r) => r.data);
+
+export default function Home() {
   const [number, setNumber] = useState("");
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState(null);
   const router = useRouter();
+  const { data: pollData, error: pollError } = useSWR("/api/poll", fetcher, { refreshInterval: 5000 });
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -16,12 +20,10 @@ export default function Login() {
     try {
       const res = await axios.post("/api/validate-number", { number });
       if (res?.data?.alreadyVoted) {
-        // store number locally and navigate to vote page to show results (they already voted)
         localStorage.setItem("voter_number", number.replace(/\s+/g, ""));
         router.push("/vote");
         return;
       }
-      // proceed to vote
       localStorage.setItem("voter_number", number.replace(/\s+/g, ""));
       router.push("/vote");
     } catch (err) {
@@ -32,6 +34,8 @@ export default function Login() {
       setLoading(false);
     }
   }
+
+  const poll = pollData?.poll;
 
   return (
     <div className="max-w-xl mx-auto">
@@ -61,6 +65,29 @@ export default function Login() {
 
         {msg && <div className="mt-3 text-sm text-red-600">{msg}</div>}
       </form>
+
+      {/* Public results panel */}
+      <div className="card p-6 mt-6">
+        <h2 className="text-lg font-semibold mb-2">Hasil Voting (Publik)</h2>
+
+        {pollError && <div className="text-sm text-red-600">Gagal memuat hasil.</div>}
+        {!poll && !pollError && <div className="text-sm text-slate-500">Memuat hasil...</div>}
+
+        {poll && (
+          <div>
+            <div className="text-sm text-slate-600 mb-4">{poll.description}</div>
+            <div className="space-y-2">
+              {poll.options.map((o) => (
+                <div key={o.id} className="flex justify-between items-center px-3 py-2 border rounded">
+                  <div className="font-medium">{o.label}</div>
+                  <div className="text-sm text-slate-600">{o.votes || 0} vote</div>
+                </div>
+              ))}
+            </div>
+            <div className="text-xs text-slate-500 mt-3">Data di-refresh otomatis setiap 5 detik.</div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
