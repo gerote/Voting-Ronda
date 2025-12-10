@@ -2,6 +2,29 @@ import { getDb } from "../../utils/mongodb";
 import fallbackStore from "../../utils/fallbackStore";
 import { allowedListFromEnv, normalizeNumber } from "../../utils/allowedNumbers";
 
+const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT = process.env.TELEGRAM_CHAT_ID;
+
+function maskNumber(num) {
+  if (!num) return "";
+  // show only last 4 digits, mask rest
+  return num.replace(/\d(?=\d{4})/g, "*");
+}
+
+async function sendTelegramMessage(text) {
+  if (!TELEGRAM_TOKEN || !TELEGRAM_CHAT) return;
+  try {
+    // Node 18+ has global fetch on Vercel
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: TELEGRAM_CHAT, text, parse_mode: "HTML" })
+    });
+  } catch (e) {
+    console.error("Telegram notify failed:", e?.message || e);
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", ["POST"]);
@@ -20,6 +43,13 @@ export default async function handler(req, res) {
   if (!db) {
     try {
       const poll = await fallbackStore.vote(num, optionId);
+
+      // send telegram (fallback)
+      const opt = poll.options.find((o) => o.id === optionId);
+      const label = opt ? opt.label : optionId;
+      const text = `Vote (fallback): <b>${label}</b>\nVoter: ${maskNumber(num)}\nTotal: ${opt?.votes || 0}`;
+      sendTelegramMessage(text).catch(() => {});
+
       return res.status(200).json({ ok: true, poll });
     } catch (e) {
       if (e.code === "already_voted") return res.status(409).json({ error: "already_voted" });
@@ -43,7 +73,25 @@ export default async function handler(req, res) {
     await db.collection("votes").insertOne({ pollId: pollDoc._id, number: num, optionId, votedAt: new Date() });
 
     const updated = result.value;
-    return res.status(200).json({ ok: true, poll: { id: updated._1?.toString ? updated._1.toString() : updated._id.toString(), title: updated.title, description: updated.description, options: updated.options }});
+
+    // find option label & votes after update
+    const opt = updated.options.find((o) => o.id === optionId);
+    const label = opt ? opt.label : optionId;
+    const votesCount = opt?.votes || 0;
+
+    // send telegram
+    const text = `Vote: <b>${label}</b>\nVoter: ${maskNumber(num)}\nTotal: ${votesCount}`;
+    sendTelegramMessage(text).catch(() => {});
+
+    return res.status(200).json({
+      ok: true,
+      poll: {
+        id: updated._id.toString(),
+        title: updated.title,
+        description: updated.description,
+        options: updated.options
+      }
+    });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: "server_error" });
